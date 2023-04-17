@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hungmol/golang-opa-wasm/sdk/internal/wasm"
+	"github.com/hungmol/golang-opa-wasm/sdk/wasm"
 	wasm_util "github.com/hungmol/golang-opa-wasm/util"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/bundle"
