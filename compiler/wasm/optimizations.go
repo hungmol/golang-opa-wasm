@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/open-policy-agent/opa/internal/compiler/wasm/opa"
-	"github.com/open-policy-agent/opa/internal/wasm/encoding"
-	"github.com/open-policy-agent/opa/internal/wasm/instruction"
-	"github.com/open-policy-agent/opa/internal/wasm/module"
+	"github.com/hungmol/golang-opa-wasm/compiler/wasm/opa"
+	"github.com/hungmol/golang-opa-wasm/wasm/encoding"
+	"github.com/hungmol/golang-opa-wasm/wasm/instruction"
+	"github.com/hungmol/golang-opa-wasm/wasm/module"
 )
 
 const warning = `---------------------------------------------------------------

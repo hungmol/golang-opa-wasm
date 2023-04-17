@@ -7,10 +7,10 @@ package wasm
 import (
 	"testing"
 
+	"github.com/hungmol/golang-opa-wasm/planner"
+	"github.com/hungmol/golang-opa-wasm/wasm/instruction"
+	"github.com/hungmol/golang-opa-wasm/wasm/module"
 	"github.com/open-policy-agent/opa/ast"
-	"github.com/open-policy-agent/opa/internal/planner"
-	"github.com/open-policy-agent/opa/internal/wasm/instruction"
-	"github.com/open-policy-agent/opa/internal/wasm/module"
 )
 
 func TestCompilerHelloWorld(t *testing.T) {
