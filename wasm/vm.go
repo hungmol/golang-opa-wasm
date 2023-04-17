@@ -17,7 +17,7 @@ import (
 	wasmtime "github.com/bytecodealliance/wasmtime-go/v3"
 
 	sdk_errors "github.com/hungmol/golang-opa-wasm/opa/errors"
-	"github.com/hungmol/golang-opa-wasm/wasm/util"
+	"github.com/hungmol/golang-opa-wasm/util"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/metrics"
 	"github.com/open-policy-agent/opa/topdown"

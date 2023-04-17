@@ -8,8 +8,8 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/hungmol/golang-opa-wams/opa/wasm/sdk/opa/errors"
-	"github.com/hungmol/golang-opa-wasm/opa/wasm/util"
+	"github.com/hungmol/golang-opa-wasm/opa/errors"
+	"github.com/hungmol/golang-opa-wasm/util"
 )
 
 // WithPolicyFile configures a policy file to load.
