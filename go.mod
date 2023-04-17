@@ -1,6 +1,6 @@
-module github.com/open-policy-agent/golang-opa-wasm
+module github.com/hungmol/golang-opa-wasm
 
-go 1.12
+go 1.19
 
 require (
 	github.com/OneOfOne/xxhash v1.2.8 // indirect

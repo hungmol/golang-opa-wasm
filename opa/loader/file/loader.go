@@ -6,20 +6,23 @@ package file
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/hungmol/golang-opa-wasm/opa/errors"
 	"github.com/open-policy-agent/opa/bundle"
 
-	"github.com/open-policy-agent/golang-opa-wasm/opa"
+	// "github.com/open-policy-agent/opa/internal/wasm/sdk/opa"
+	"github.com/hungmol/golang-opa-wasm/opa"
 )
 
 const (
 	// DefaultInterval for re-loading the bundle file.
 	DefaultInterval = time.Minute
 )
+
+var errNotReady = errors.New(errors.NotReadyErr, "")
 
 // Loader loads a bundle from a file. If started, it loads the bundle
 // periodically until closed.
@@ -37,7 +40,7 @@ type Loader struct {
 
 // policyData captures the functions used in setting the policy and data.
 type policyData interface {
-	SetPolicyData(policy []byte, data *interface{}) error
+	SetPolicyData(ctx context.Context, policy []byte, data *interface{}) error
 }
 
 // New constructs a new file loader periodically reloading the bundle
@@ -46,7 +49,7 @@ func New(opa *opa.OPA) *Loader {
 	return new(opa)
 }
 
-// new constucts a new file loader. This is for tests.
+// new constructs a new file loader. This is for tests.
 func new(pd policyData) *Loader {
 	return &Loader{
 		pd:       pd,
@@ -63,7 +66,7 @@ func (l *Loader) Init() (*Loader, error) {
 	}
 
 	if l.filename == "" {
-		return nil, fmt.Errorf("filename: %w", opa.ErrInvalidConfig)
+		return nil, errors.New(errors.InvalidConfigErr, "missing filename")
 	}
 
 	l.initialized = true
@@ -74,7 +77,7 @@ func (l *Loader) Init() (*Loader, error) {
 // bundle loading fails.
 func (l *Loader) Start(ctx context.Context) error {
 	if !l.initialized {
-		return opa.ErrNotReady
+		return errNotReady
 	}
 
 	if err := l.Load(ctx); err != nil {
@@ -112,7 +115,7 @@ func (l *Loader) Close() {
 // returns.
 func (l *Loader) Load(ctx context.Context) error {
 	if !l.initialized {
-		return opa.ErrNotReady
+		return errNotReady
 	}
 
 	l.mutex.Lock()
@@ -120,29 +123,29 @@ func (l *Loader) Load(ctx context.Context) error {
 
 	f, err := os.Open(l.filename)
 	if err != nil {
-		return fmt.Errorf("%v: %w", err, opa.ErrInvalidBundle)
+		return errors.New(errors.InvalidBundleErr, err.Error())
 	}
 
 	defer f.Close()
 
 	// TODO: Cut the dependency to the OPA bundle package.
 
-	bundle, err := bundle.NewReader(f).Read()
+	b, err := bundle.NewReader(f).Read()
 	if err != nil {
-		return fmt.Errorf("%v: %w", err, opa.ErrInvalidBundle)
+		return errors.New(errors.InvalidBundleErr, err.Error())
 	}
 
-	if bundle.Wasm == nil {
-		return fmt.Errorf("missing wasm: %w", opa.ErrInvalidBundle)
+	if len(b.WasmModules) == 0 {
+		return errors.New(errors.InvalidBundleErr, "missing wasm")
 	}
 
 	var data *interface{}
-	if bundle.Data != nil {
-		var v interface{} = bundle.Data
+	if b.Data != nil {
+		var v interface{} = b.Data
 		data = &v
 	}
 
-	return l.pd.SetPolicyData(bundle.Wasm, data)
+	return l.pd.SetPolicyData(ctx, b.WasmModules[0].Raw, data)
 }
 
 // poller periodically downloads the bundle.

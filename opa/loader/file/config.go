@@ -5,10 +5,9 @@
 package file
 
 import (
-	"fmt"
 	"time"
 
-	"github.com/open-policy-agent/golang-opa-wasm/opa"
+	"github.com/hungmol/golang-opa-wasm/opa/errors"
 )
 
 // WithFile configures the file to load the bundle from.
@@ -26,7 +25,7 @@ func (l *Loader) WithInterval(interval time.Duration) *Loader {
 // WithErrorLogger configures an error logger invoked with all the errors.
 func (l *Loader) WithErrorLogger(logger func(error)) *Loader {
 	if logger == nil {
-		l.configErr = fmt.Errorf("logger: %w", opa.ErrInvalidConfig)
+		l.configErr = errors.New(errors.InvalidConfigErr, "missing logger")
 		return l
 	}
 

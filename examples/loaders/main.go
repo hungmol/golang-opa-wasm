@@ -11,22 +11,17 @@ import (
 	"os"
 	"time"
 
-	"github.com/open-policy-agent/golang-opa-wasm/opa"
-	"github.com/open-policy-agent/golang-opa-wasm/opa/file"
-	"github.com/open-policy-agent/golang-opa-wasm/opa/http"
+	"github.com/hungmol/golang-opa-wasm/opa"
+	opaLoader "github.com/hungmol/golang-opa-wasm/opa/loader"
+	"github.com/hungmol/golang-opa-wasm/opa/loader/file"
+	"github.com/hungmol/golang-opa-wasm/opa/loader/http"
 )
 
 var (
-	loader opa.Loader
+	loader opaLoader.Loader
 	rego   *opa.OPA
 )
 
-// main loads a bundle either from a file or HTTP server.
-//
-// In the directory of the main.go, execute 'go run main.go
-// bundle.tgz' to load the accompanied bundle file. Similarly, execute
-// 'go run main.go http://url/to/bundle.tgz' to test the HTTP
-// downloading from a HTTP server.
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Printf("provide URL or file\n")
@@ -55,7 +50,20 @@ func main() {
 	}
 
 	ctx := context.Background()
-	result, err := rego.Eval(ctx, &input)
+
+	eps, err := rego.Entrypoints(ctx)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return
+	}
+
+	entrypointID, ok := eps["example/allow"]
+	if !ok {
+		fmt.Println("error: Unable to find entrypoint 'example/allow'")
+		return
+	}
+
+	result, err := rego.Eval(ctx, opa.EvalOpts{Entrypoint: entrypointID, Input: &input})
 	if err != nil {
 		fmt.Printf("error: %v\n", err)
 		return
@@ -65,7 +73,8 @@ func main() {
 }
 
 func setup(u string, token string) error {
-	r, err := opa.New().Init()
+	var err error
+	rego, err = opa.New().Init()
 	if err != nil {
 		return err
 	}
@@ -75,11 +84,9 @@ func setup(u string, token string) error {
 		return err
 	}
 
-	var l opa.Loader
-
 	switch url.Scheme {
 	case "http", "https":
-		l, err = http.New(r).
+		loader, err = http.New(rego).
 			WithURL(url.String()).
 			WithPrepareRequest(func(req *gohttp.Request) error {
 				if token != "" {
@@ -90,7 +97,7 @@ func setup(u string, token string) error {
 			WithInterval(30*time.Second, 60*time.Second).
 			Init()
 	case "file", "":
-		l, err = file.New(r).
+		loader, err = file.New(rego).
 			WithFile(url.String()).
 			WithInterval(10 * time.Second).
 			Init()
@@ -100,15 +107,18 @@ func setup(u string, token string) error {
 		return err
 	}
 
-	if err := l.Start(context.Background()); err != nil {
+	if err := loader.Start(context.Background()); err != nil {
 		return err
 	}
 
-	rego, loader = r, l
 	return nil
 }
 
 func cleanup() {
-	loader.Close()
-	rego.Close()
+	if loader != nil {
+		loader.Close()
+	}
+	if rego != nil {
+		rego.Close()
+	}
 }

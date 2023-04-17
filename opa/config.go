@@ -6,17 +6,17 @@ package opa
 
 import (
 	"encoding/json"
-	"fmt"
-	"io/ioutil"
-)
+	"os"
 
-const wasmPageSize = 65535
+	"github.com/hungmol/golang-opa-wams/opa/wasm/sdk/opa/errors"
+	"github.com/hungmol/golang-opa-wasm/opa/wasm/util"
+)
 
 // WithPolicyFile configures a policy file to load.
 func (o *OPA) WithPolicyFile(fileName string) *OPA {
-	policy, err := ioutil.ReadFile(fileName)
+	policy, err := os.ReadFile(fileName)
 	if err != nil {
-		o.configErr = fmt.Errorf("%v: %w", err.Error(), ErrInvalidConfig)
+		o.configErr = errors.New(errors.InvalidConfigErr, err.Error())
 		return o
 	}
 
@@ -32,9 +32,9 @@ func (o *OPA) WithPolicyBytes(policy []byte) *OPA {
 
 // WithDataFile configures the JSON data file to load.
 func (o *OPA) WithDataFile(fileName string) *OPA {
-	data, err := ioutil.ReadFile(fileName)
+	data, err := os.ReadFile(fileName)
 	if err != nil {
-		o.configErr = fmt.Errorf("%v: %w", err.Error(), ErrInvalidConfig)
+		o.configErr = errors.New(errors.InvalidConfigErr, err.Error())
 		return o
 	}
 
@@ -52,7 +52,7 @@ func (o *OPA) WithDataBytes(data []byte) *OPA {
 func (o *OPA) WithDataJSON(data interface{}) *OPA {
 	v, err := json.Marshal(data)
 	if err != nil {
-		o.configErr = fmt.Errorf("%v: %w", err.Error(), ErrInvalidConfig)
+		o.configErr = errors.New(errors.InvalidConfigErr, err.Error())
 		return o
 	}
 
@@ -63,17 +63,21 @@ func (o *OPA) WithDataJSON(data interface{}) *OPA {
 // WithMemoryLimits configures the memory limits (in bytes) for a single policy
 // evaluation.
 func (o *OPA) WithMemoryLimits(min, max uint32) *OPA {
-	if min < 2*65535 {
-		o.configErr = fmt.Errorf("too low minimum memory limit: %w", ErrInvalidConfig)
+	if min < 2*util.PageSize {
+		o.configErr = errors.New(errors.InvalidConfigErr, "too low minimum memory limit")
 		return o
 	}
 
-	if max != 0 && min > max {
-		o.configErr = fmt.Errorf("too low maximum memory limit: %w", ErrInvalidConfig)
+	if max == 0 {
+		max = 0xffffffff
+	}
+
+	if min > max {
+		o.configErr = errors.New(errors.InvalidConfigErr, "too low maximum memory limit")
 		return o
 	}
 
-	o.memoryMinPages, o.memoryMaxPages = pages(min), pages(max)
+	o.memoryMinPages, o.memoryMaxPages = util.Pages(min), util.Pages(max)
 	return o
 }
 
@@ -83,7 +87,7 @@ func (o *OPA) WithMemoryLimits(min, max uint32) *OPA {
 // usable for the process as per runtime.NumCPU().
 func (o *OPA) WithPoolSize(size uint32) *OPA {
 	if size == 0 {
-		o.configErr = fmt.Errorf("pool size: %w", ErrInvalidConfig)
+		o.configErr = errors.New(errors.InvalidConfigErr, "pool size")
 		return o
 	}
 
@@ -95,14 +99,4 @@ func (o *OPA) WithPoolSize(size uint32) *OPA {
 func (o *OPA) WithErrorLogger(logger func(error)) *OPA {
 	o.logError = logger
 	return o
-}
-
-// pages converts a byte size to pages, rounding up as necessary.
-func pages(n uint32) uint32 {
-	pages := n / wasmPageSize
-	if pages*wasmPageSize == n {
-		return pages
-	}
-
-	return pages + 1
 }

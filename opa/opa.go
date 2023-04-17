@@ -7,10 +7,22 @@ package opa
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"io"
 	"runtime"
 	"sync"
+	"time"
+
+	"github.com/hungmol/golang-opa-wasm/opa/errors"
+	sdk_errors "github.com/hungmol/golang-opa-wasm/opa/errors"
+	"github.com/hungmol/golang-opa-wasm/wasm"
+	"github.com/open-policy-agent/opa/ast"
+	"github.com/open-policy-agent/opa/metrics"
+	"github.com/open-policy-agent/opa/topdown/builtins"
+	"github.com/open-policy-agent/opa/topdown/cache"
+	"github.com/open-policy-agent/opa/topdown/print"
 )
+
+var errNotReady = errors.New(errors.NotReadyErr, "")
 
 // OPA executes WebAssembly compiled Rego policies.
 type OPA struct {
@@ -18,7 +30,7 @@ type OPA struct {
 	memoryMinPages uint32
 	memoryMaxPages uint32 // 0 means no limit.
 	poolSize       uint32
-	pool           *pool
+	pool           *wasm.Pool
 	mutex          sync.Mutex // To serialize access to SetPolicy, SetData and Close.
 	policy         []byte     // Current policy.
 	data           []byte     // Current data.
@@ -27,7 +39,7 @@ type OPA struct {
 
 // Result holds the evaluation result.
 type Result struct {
-	Result interface{}
+	Result []byte
 }
 
 // New constructs a new OPA SDK instance, ready to be configured with
@@ -37,8 +49,8 @@ type Result struct {
 // initialized before invoking the Eval.
 func New() *OPA {
 	opa := &OPA{
-		memoryMinPages: 2,
-		memoryMaxPages: 0,
+		memoryMinPages: 16,
+		memoryMaxPages: 0x10000, // 4GB
 		poolSize:       uint32(runtime.GOMAXPROCS(0)),
 		logError:       func(error) {},
 	}
@@ -50,14 +62,15 @@ func New() *OPA {
 // configuration. If the configuration is invalid, it returns
 // ErrInvalidConfig.
 func (o *OPA) Init() (*OPA, error) {
+	ctx := context.Background()
 	if o.configErr != nil {
 		return nil, o.configErr
 	}
 
-	o.pool = newPool(o.poolSize, o.memoryMinPages, o.memoryMaxPages)
+	o.pool = wasm.NewPool(o.poolSize, o.memoryMinPages, o.memoryMaxPages)
 
 	if len(o.policy) != 0 {
-		if err := o.pool.SetPolicyData(o.policy, o.data); err != nil {
+		if err := o.pool.SetPolicyData(ctx, o.policy, o.data); err != nil {
 			return nil, err
 		}
 	}
@@ -68,42 +81,56 @@ func (o *OPA) Init() (*OPA, error) {
 // SetData updates the data for the subsequent Eval calls.  Returns
 // either ErrNotReady, ErrInvalidPolicyOrData, or ErrInternal if an
 // error occurs.
-func (o *OPA) SetData(v interface{}) error {
+func (o *OPA) SetData(ctx context.Context, v interface{}) error {
 	if o.pool == nil {
-		return ErrNotReady
+		return errNotReady
 	}
 
 	raw, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("%v: %w", err, ErrInvalidPolicyOrData)
+		return sdk_errors.New(sdk_errors.InvalidPolicyOrDataErr, err.Error())
 	}
 
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
-	return o.setPolicyData(o.policy, raw)
+	return o.setPolicyData(ctx, o.policy, raw)
+}
+
+// SetDataPath will update the current data on the VMs by setting the value at the
+// specified path. If an error occurs the instance is still in a valid state, however
+// the data will not have been modified.
+func (o *OPA) SetDataPath(ctx context.Context, path []string, value interface{}) error {
+	return o.pool.SetDataPath(ctx, path, value)
+}
+
+// RemoveDataPath will update the current data on the VMs by removing the value at the
+// specified path. If an error occurs the instance is still in a valid state, however
+// the data will not have been modified.
+func (o *OPA) RemoveDataPath(ctx context.Context, path []string) error {
+	return o.pool.RemoveDataPath(ctx, path)
 }
 
 // SetPolicy updates the policy for the subsequent Eval calls.
 // Returns either ErrNotReady, ErrInvalidPolicy or ErrInternal if an
 // error occurs.
-func (o *OPA) SetPolicy(p []byte) error {
+func (o *OPA) SetPolicy(ctx context.Context, p []byte) error {
 	if o.pool == nil {
-		return ErrNotReady
+		return errNotReady
 	}
 
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
-	return o.setPolicyData(p, o.data)
+	return o.setPolicyData(ctx, p, o.data)
 }
 
 // SetPolicyData updates both the policy and data for the subsequent
 // Eval calls.  Returns either ErrNotReady, ErrInvalidPolicyOrData, or
 // ErrInternal if an error occurs.
-func (o *OPA) SetPolicyData(policy []byte, data *interface{}) error {
+func (o *OPA) SetPolicyData(ctx context.Context, policy []byte, data *interface{}) error {
 	if o.pool == nil {
-		return ErrNotReady
+		return errNotReady
 	}
 
 	var raw []byte
@@ -111,18 +138,18 @@ func (o *OPA) SetPolicyData(policy []byte, data *interface{}) error {
 		var err error
 		raw, err = json.Marshal(*data)
 		if err != nil {
-			return fmt.Errorf("%v: %w", err, ErrInvalidPolicyOrData)
+			return sdk_errors.New(sdk_errors.InvalidPolicyOrDataErr, err.Error())
 		}
 	}
 
 	o.mutex.Lock()
 	defer o.mutex.Unlock()
 
-	return o.setPolicyData(policy, raw)
+	return o.setPolicyData(ctx, policy, raw)
 }
 
-func (o *OPA) setPolicyData(policy []byte, data []byte) error {
-	if err := o.pool.SetPolicyData(policy, data); err != nil {
+func (o *OPA) setPolicyData(ctx context.Context, policy []byte, data []byte) error {
+	if err := o.pool.SetPolicyData(ctx, policy, data); err != nil {
 		return err
 	}
 
@@ -131,28 +158,46 @@ func (o *OPA) setPolicyData(policy []byte, data []byte) error {
 	return nil
 }
 
+// EvalOpts define options for performing an evaluation
+type EvalOpts struct {
+	Entrypoint             int32
+	Input                  *interface{}
+	Metrics                metrics.Metrics
+	Time                   time.Time
+	Seed                   io.Reader
+	InterQueryBuiltinCache cache.InterQueryCache
+	NDBuiltinCache         builtins.NDBCache
+	PrintHook              print.Hook
+	Capabilities           *ast.Capabilities
+}
+
 // Eval evaluates the policy with the given input, returning the
 // evaluation results. If no policy was configured at construction
 // time nor set after, the function returns ErrNotReady.  It returns
 // ErrInternal if any other error occurs.
-func (o *OPA) Eval(ctx context.Context, input *interface{}) (*Result, error) {
+func (o *OPA) Eval(ctx context.Context, opts EvalOpts) (*Result, error) {
 	if o.pool == nil {
-		return nil, ErrNotReady
+		return nil, errNotReady
 	}
 
-	instance, err := o.pool.Acquire(ctx)
+	m := opts.Metrics
+	if m == nil {
+		m = metrics.New()
+	}
+
+	instance, err := o.pool.Acquire(ctx, m)
 	if err != nil {
 		return nil, err
 	}
 
-	defer o.pool.Release(instance)
+	defer o.pool.Release(instance, m)
 
-	result, err := instance.Eval(ctx, input)
+	result, err := instance.Eval(ctx, opts.Entrypoint, opts.Input, m, opts.Seed, opts.Time, opts.InterQueryBuiltinCache, opts.NDBuiltinCache, opts.PrintHook, opts.Capabilities)
 	if err != nil {
-		return nil, fmt.Errorf("%v: %w", err, ErrInternal)
+		return nil, err
 	}
 
-	return &Result{result}, nil
+	return &Result{Result: result}, nil
 }
 
 // Close waits until all the pending evaluations complete and then
@@ -169,35 +214,14 @@ func (o *OPA) Close() {
 	o.pool.Close()
 }
 
-// EvalBool evaluates the boolean policy with the given input. The
-// possible error values returned are as with Eval with addition of
-// ErrUndefined indicating an undefined policy decision and
-// ErrNonBoolean indicating a non-boolean policy decision.
-func EvalBool(ctx context.Context, o *OPA, input *interface{}) (bool, error) {
-	rs, err := o.Eval(ctx, input)
+// Entrypoints returns a mapping of entrypoint name to ID for use by Eval() and EvalBool().
+func (o *OPA) Entrypoints(ctx context.Context) (map[string]int32, error) {
+	instance, err := o.pool.Acquire(ctx, metrics.New())
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 
-	r, ok := rs.Result.([]interface{})
-	if !ok || len(r) == 0 {
-		return false, ErrUndefined
-	}
+	defer o.pool.Release(instance, metrics.New())
 
-	m, ok := r[0].(map[string]interface{})
-	if !ok || len(m) != 1 {
-		return false, ErrNonBoolean
-	}
-
-	var b bool
-	for _, v := range m {
-		b, ok = v.(bool)
-		break
-	}
-
-	if !ok {
-		return false, ErrNonBoolean
-	}
-
-	return b, nil
+	return instance.Entrypoints(), nil
 }

@@ -8,15 +8,14 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/rand"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/hungmol/golang-opa-wasm/opa"
+	"github.com/hungmol/golang-opa-wasm/opa/errors"
 	"github.com/open-policy-agent/opa/bundle"
-
-	"github.com/open-policy-agent/golang-opa-wasm/opa"
 )
 
 const (
@@ -53,17 +52,17 @@ type Loader struct {
 
 // policyData captures the functions used in setting the policy and data.
 type policyData interface {
-	SetPolicyData(policy []byte, data *interface{}) error
+	SetPolicyData(ctx context.Context, policy []byte, data *interface{}) error
 }
 
 // New constructs a new HTTP loader periodically downloading a bundle
 // over HTTP.
 func New(o *opa.OPA) *Loader {
-	return new(o)
+	return newLoader(o)
 }
 
-// new constucts a new HTTP loader. This is for tests.
-func new(pd policyData) *Loader {
+// newLoader constructs a new HTTP loader. This is for tests.
+func newLoader(pd policyData) *Loader {
 	return &Loader{
 		pd:             pd,
 		client:         http.DefaultClient,
@@ -82,7 +81,7 @@ func (l *Loader) Init() (*Loader, error) {
 	}
 
 	if l.url == "" {
-		return nil, fmt.Errorf("missing url: %w", opa.ErrInvalidConfig)
+		return nil, errors.New(errors.InvalidConfigErr, "missing url")
 	}
 
 	l.initialized = true
@@ -93,7 +92,7 @@ func (l *Loader) Init() (*Loader, error) {
 // successful download.  If cancelled, will return context.Cancelled.
 func (l *Loader) Start(ctx context.Context) error {
 	if !l.initialized {
-		return opa.ErrNotReady
+		return errors.New(errors.NotReadyErr, "")
 	}
 
 	if err := l.download(ctx); err != nil {
@@ -142,7 +141,7 @@ func (l *Loader) poller() {
 
 		select {
 		case <-time.After(time.Duration(float64((l.maxDelay-l.minDelay))*rand.Float64()) + l.minDelay):
-		case <-l.closing:
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -157,7 +156,7 @@ func (l *Loader) download(ctx context.Context) error {
 			return err
 		} else if err != nil {
 			l.logError(err)
-		} else if err == nil {
+		} else {
 			break
 		}
 
@@ -177,7 +176,7 @@ func (l *Loader) download(ctx context.Context) error {
 // SetPolicyData of OPA returns.
 func (l *Loader) Load(ctx context.Context) error {
 	if !l.initialized {
-		return opa.ErrNotReady
+		return errors.New(errors.NotReadyErr, "")
 	}
 
 	l.mutex.Lock()
@@ -185,11 +184,11 @@ func (l *Loader) Load(ctx context.Context) error {
 
 	bundle, err := l.get(ctx, "")
 	if err != nil {
-		return fmt.Errorf("%v: %w", err, opa.ErrInvalidBundle)
+		return errors.New(errors.InvalidBundleErr, err.Error())
 	}
 
-	if bundle.Wasm == nil {
-		return opa.ErrInvalidBundle
+	if len(bundle.WasmModules) == 0 {
+		return errors.New(errors.InvalidBundleErr, "missing wasm")
 	}
 
 	var data *interface{}
@@ -198,7 +197,7 @@ func (l *Loader) Load(ctx context.Context) error {
 		data = &v
 	}
 
-	return l.pd.SetPolicyData(bundle.Wasm, data)
+	return l.pd.SetPolicyData(ctx, bundle.WasmModules[0].Raw, data)
 }
 
 // get executes HTTP GET.
@@ -252,6 +251,6 @@ func (l *Loader) get(ctx context.Context, tag string) (*bundle.Bundle, error) {
 // close closes the HTTP response gracefully, first draining it, to
 // avoid resource leaks.
 func (l *Loader) close(resp *http.Response) {
-	io.Copy(ioutil.Discard, resp.Body) // Ignore errors.
-	resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body) // Ignore errors.
+	_ = resp.Body.Close()
 }
