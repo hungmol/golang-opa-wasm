@@ -13,10 +13,10 @@ import (
 
 	"github.com/hungmol/golang-opa-wasm/constant"
 	"github.com/hungmol/golang-opa-wasm/instruction"
+	"github.com/hungmol/golang-opa-wasm/leb128"
 	"github.com/hungmol/golang-opa-wasm/module"
 	"github.com/hungmol/golang-opa-wasm/opcode"
 	"github.com/hungmol/golang-opa-wasm/types"
-	"github.com/open-policy-agent/opa/internal/leb128"
 )
 
 // WriteModule writes a binary-encoded representation of module to w.

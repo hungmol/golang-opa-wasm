@@ -12,10 +12,10 @@ import (
 
 	"github.com/hungmol/golang-opa-wasm/constant"
 	"github.com/hungmol/golang-opa-wasm/instruction"
+	"github.com/hungmol/golang-opa-wasm/leb128"
 	"github.com/hungmol/golang-opa-wasm/module"
 	"github.com/hungmol/golang-opa-wasm/opcode"
 	"github.com/hungmol/golang-opa-wasm/types"
-	"github.com/open-policy-agent/opa/internal/leb128"
 )
 
 // ReadModule reads a binary-encoded WASM module from r.

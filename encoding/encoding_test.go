@@ -11,8 +11,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/hungmol/golang-opa-wasm/compiler/wasm/opa"
 	"github.com/hungmol/golang-opa-wasm/module"
-	"github.com/open-policy-agent/opa/internal/compiler/wasm/opa"
 )
 
 func TestRoundtrip(t *testing.T) {
