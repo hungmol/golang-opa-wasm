@@ -59,6 +59,10 @@ type VM struct {
 	free                 func(context.Context, int32) error
 	valueAddPath         func(context.Context, int32, int32, int32) (int32, error)
 	valueRemovePath      func(context.Context, int32, int32) (int32, error)
+	valueFree            func(context.Context, int32) error
+	heapBlocksStash      func(context.Context) error
+	heapBlocksRestore    func(context.Context) error
+	heapStashClear       func(context.Context) error
 }
 
 type vmOpts struct {
@@ -107,7 +111,8 @@ func newVM(opts vmOpts, engine *wasmtime.Engine) (*VM, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid module: %w", err)
 	}
-	if v.abiMajorVersion != int32(1) || (v.abiMinorVersion != int32(1) && v.abiMinorVersion != int32(2)) {
+	if v.abiMajorVersion != int32(1) || (v.abiMinorVersion != int32(1) && v.abiMinorVersion != int32(3)) {
+		// if v.abiMajorVersion != int32(1) || (v.abiMinorVersion != int32(1) && v.abiMinorVersion != int32(2)) {
 		return nil, fmt.Errorf("invalid module: unsupported ABI version: %d.%d", v.abiMajorVersion, v.abiMinorVersion)
 	}
 
@@ -155,7 +160,18 @@ func newVM(opts vmOpts, engine *wasmtime.Engine) (*VM, error) {
 	v.valueRemovePath = func(ctx context.Context, a int32, b int32) (int32, error) {
 		return call(ctx, v, "opa_value_remove_path", a, b)
 	}
-
+	v.valueFree = func(ctx context.Context, a int32) error {
+		return callVoid(ctx, v, "opa_value_free", a)
+	}
+	v.heapBlocksStash = func(ctx context.Context) error {
+		return callVoid(ctx, v, "opa_heap_blocks_stash")
+	}
+	v.heapBlocksRestore = func(ctx context.Context) error {
+		return callVoid(ctx, v, "opa_heap_blocks_restore")
+	}
+	v.heapStashClear = func(ctx context.Context) error {
+		return callVoid(ctx, v, "opa_heap_stash_clear")
+	}
 	// Initialize the heap.
 
 	if _, err := v.malloc(ctx, 0); err != nil {
@@ -452,11 +468,16 @@ func (i *VM) SetPolicyData(ctx context.Context, opts vmOpts) error {
 
 	i.dataAddr = 0
 
-	var err error
-	if err = i.setHeapState(ctx, i.baseHeapPtr); err != nil {
+	// Release any stashed heap blocks since they will be above the base heap pointer
+	if err := i.heapStashClear(ctx); err != nil {
 		return err
 	}
 
+	if err := i.setHeapState(ctx, i.baseHeapPtr); err != nil {
+		return err
+	}
+
+	var err error
 	if opts.parsedData != nil {
 		if uint32(i.memory.DataSize(i.store))-uint32(i.baseHeapPtr) < uint32(len(opts.parsedData)) {
 			delta := uint32(len(opts.parsedData)) - (uint32(i.memory.DataSize(i.store)) - uint32(i.baseHeapPtr))
@@ -481,7 +502,13 @@ func (i *VM) SetPolicyData(ctx context.Context, opts vmOpts) error {
 		}
 	}
 
-	if i.evalHeapPtr, err = i.getHeapState(ctx); err != nil {
+	// Stash any free blocks so that eval()/setHeapState() won't leak them
+	if err := i.heapBlocksStash(ctx); err != nil {
+		return err
+	}
+
+	i.evalHeapPtr, err = i.getHeapState(ctx)
+	if err != nil {
 		return err
 	}
 
