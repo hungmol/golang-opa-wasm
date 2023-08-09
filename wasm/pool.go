@@ -9,7 +9,7 @@ import (
 	"context"
 	"sync"
 
-	wasmtime "github.com/bytecodealliance/wasmtime-go/v3"
+	wasmtime "github.com/bytecodealliance/wasmtime-go/v11"
 
 	"github.com/hungmol/golang-opa-wasm/opa/errors"
 	"github.com/hungmol/golang-opa-wasm/util"
